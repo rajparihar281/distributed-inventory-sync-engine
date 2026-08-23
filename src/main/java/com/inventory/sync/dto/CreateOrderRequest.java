@@ -18,8 +18,11 @@ public class CreateOrderRequest {
     @NotNull(message = "Order channel is required")
     private OrderChannel channel;
 
-    @NotNull(message = "Warehouse ID is required for direct fulfillment")
+    // Optional: If null, the fulfillment strategy dynamically allocates warehouses
     private Long warehouseId;
+
+    // Optional: "singleWarehouseStrategy" or "splitShipmentStrategy" (defaults to split)
+    private String fulfillmentStrategy;
 
     @NotEmpty(message = "Order must contain at least one line item")
     @Valid
