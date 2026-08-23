@@ -3,11 +3,15 @@ package com.inventory.sync.service;
 import com.inventory.sync.domain.*;
 import com.inventory.sync.dto.CreateOrderRequest;
 import com.inventory.sync.dto.OrderResponse;
-import com.inventory.sync.repository.*;
+import com.inventory.sync.repository.InventoryReservationRepository;
+import com.inventory.sync.repository.OrderRepository;
+import com.inventory.sync.repository.ProductRepository;
+import com.inventory.sync.repository.WarehouseRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -77,5 +81,37 @@ public class OrderService {
                                 .build())
                         .toList())
                 .build();
+    }
+
+    @Transactional
+    public OrderResponse cancelOrder(String orderNumber) {
+        Order order = orderRepository.findByOrderNumber(orderNumber)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderNumber));
+
+        // 1. Validate and execute state transition
+        order.transitionTo(OrderStatus.CANCELLED);
+
+        // 2. Locate active reservations and release stock back to available
+        for (OrderItem item : order.getItems()) {
+            List<InventoryReservation> activeReservations = reservationRepository
+                    .findByOrderItemIdAndStatus(item.getId(), ReservationStatus.ACTIVE);
+
+            for (InventoryReservation res : activeReservations) {
+                // Revert stock in inventory table + write audit record
+                inventoryService.releaseReservation(
+                        item.getProduct().getId(),
+                        res.getWarehouse().getId(),
+                        res.getReservedQty(),
+                        order.getOrderNumber()
+                );
+
+                // Update reservation record status
+                res.setStatus(ReservationStatus.RELEASED);
+                reservationRepository.save(res);
+            }
+        }
+
+        Order savedOrder = orderRepository.save(order);
+        return mapToResponse(savedOrder);
     }
 }

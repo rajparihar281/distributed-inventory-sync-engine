@@ -21,4 +21,9 @@ public class OrderController {
         OrderResponse response = orderService.createAndReserveOrder(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
+    @PostMapping("/{orderNumber}/cancel")
+    public ResponseEntity<OrderResponse> cancelOrder(@PathVariable String orderNumber) {
+        OrderResponse response = orderService.cancelOrder(orderNumber);
+        return ResponseEntity.ok(response);
+    }
 }
