@@ -4,6 +4,8 @@ import com.inventory.sync.domain.*;
 import com.inventory.sync.exception.InsufficientStockException;
 import com.inventory.sync.repository.InventoryAuditLogRepository;
 import com.inventory.sync.repository.InventoryRepository;
+import com.inventory.sync.repository.ProductRepository;
+import com.inventory.sync.repository.WarehouseRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +16,8 @@ public class InventoryService {
 
     private final InventoryRepository inventoryRepository;
     private final InventoryAuditLogRepository auditLogRepository;
+    private final ProductRepository productRepository;
+    private final WarehouseRepository warehouseRepository;
 
     @Transactional
     public Inventory reserveStockWithLock(Long productId, Long warehouseId, int quantity, String orderNumber) {
@@ -80,5 +84,63 @@ public class InventoryService {
                 "Stock physically dispatched for Order #" + orderNumber
         );
         auditLogRepository.save(audit);
+    }
+
+    @Transactional
+    public Inventory inwardStock(Long productId, Long warehouseId, int quantity, String poReference) {
+        Inventory inventory = inventoryRepository.findByProductIdAndWarehouseIdWithLock(productId, warehouseId)
+                .orElseGet(() -> {
+                    Product product = productRepository.findById(productId)
+                            .orElseThrow(() -> new IllegalArgumentException("Product not found with ID: " + productId));
+                    Warehouse warehouse = warehouseRepository.findById(warehouseId)
+                            .orElseThrow(() -> new IllegalArgumentException("Warehouse not found with ID: " + warehouseId));
+                    return new Inventory(product, warehouse, 0, 0, 0, 0);
+                });
+
+        inventory.addPhysicalStock(quantity);
+        Inventory savedInventory = inventoryRepository.save(inventory);
+
+        InventoryAuditLog audit = new InventoryAuditLog(
+                savedInventory,
+                InventoryAuditType.INWARD,
+                +quantity,
+                +quantity,
+                0,
+                0,
+                poReference,
+                "Inward procurement batch: " + poReference
+        );
+        auditLogRepository.save(audit);
+
+        return savedInventory;
+    }
+
+    @Transactional
+    public Inventory markStockDamaged(Long productId, Long warehouseId, int quantity, String reason) {
+        Inventory inventory = inventoryRepository.findByProductIdAndWarehouseIdWithLock(productId, warehouseId)
+                .orElseThrow(() -> new IllegalStateException("Inventory record not found for damage quarantine"));
+
+        inventory.markAsDamaged(quantity);
+        Inventory savedInventory = inventoryRepository.save(inventory);
+
+        InventoryAuditLog audit = new InventoryAuditLog(
+                savedInventory,
+                InventoryAuditType.DAMAGE_QUARANTINE,
+                0,
+                -quantity,
+                0,
+                +quantity,
+                "DMG-" + System.currentTimeMillis(),
+                reason
+        );
+        auditLogRepository.save(audit);
+
+        return savedInventory;
+    }
+
+    @Transactional(readOnly = true)
+    public Inventory getInventory(Long productId, Long warehouseId) {
+        return inventoryRepository.findByProductIdAndWarehouseId(productId, warehouseId)
+                .orElseThrow(() -> new IllegalArgumentException("Inventory record not found"));
     }
 }

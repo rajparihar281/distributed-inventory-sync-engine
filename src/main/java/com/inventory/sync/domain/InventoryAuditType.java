@@ -1,10 +1,10 @@
 package com.inventory.sync.domain;
 
 public enum InventoryAuditType {
-    PURCHASE_RECEIPT,
+    INWARD,
     RESERVATION_HOLD,
     RESERVATION_RELEASE,
     DISPATCH,
-    DAMAGE_WRITE_OFF,
-    MANUAL_ADJUSTMENT
+    DAMAGE_QUARANTINE,
+    ADJUSTMENT
 }

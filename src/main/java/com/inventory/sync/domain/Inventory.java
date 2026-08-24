@@ -4,7 +4,8 @@ import com.inventory.sync.exception.InsufficientStockException;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 
@@ -12,11 +13,10 @@ import java.time.LocalDateTime;
 @Table(
         name = "inventory",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_product_warehouse", columnNames = {"product_id", "warehouse_id"})
+                @UniqueConstraint(name = "uk_product_warehouse", columnNames = {"product_id", "warehouse_id"})
         }
 )
 @Getter
-@Setter
 @NoArgsConstructor
 public class Inventory {
 
@@ -45,40 +45,36 @@ public class Inventory {
     private Integer damagedQty = 0;
 
     @Version
-    @Column(name = "version", nullable = false)
     private Long version;
 
-    @Column(name = "updated_at", insertable = false, updatable = false)
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    public Inventory(Product product, Warehouse warehouse, int initialPhysicalQty) {
-        if (initialPhysicalQty < 0) {
-            throw new IllegalArgumentException("Initial quantity cannot be negative");
-        }
+    public Inventory(Product product, Warehouse warehouse, Integer physicalQty, Integer availableQty, Integer reservedQty, Integer damagedQty) {
         this.product = product;
         this.warehouse = warehouse;
-        this.physicalQty = initialPhysicalQty;
-        this.availableQty = initialPhysicalQty;
-        this.reservedQty = 0;
-        this.damagedQty = 0;
-        validateInvariant();
+        this.physicalQty = physicalQty;
+        this.availableQty = availableQty;
+        this.reservedQty = reservedQty;
+        this.damagedQty = damagedQty;
+        validateInvariants();
     }
-
-    // --- Domain Mutation Methods ---
 
     public void reserveStock(int quantity) {
         if (quantity <= 0) {
             throw new IllegalArgumentException("Reservation quantity must be positive");
         }
         if (this.availableQty < quantity) {
-            throw new InsufficientStockException(
-                    "Insufficient available stock for product " + product.getSku() +
-                            ". Requested: " + quantity + ", Available: " + this.availableQty
-            );
+            throw new InsufficientStockException("Insufficient available stock. Requested: " + quantity + ", Available: " + this.availableQty);
         }
         this.availableQty -= quantity;
         this.reservedQty += quantity;
-        validateInvariant();
+        validateInvariants();
     }
 
     public void releaseReservation(int quantity) {
@@ -86,42 +82,54 @@ public class Inventory {
             throw new IllegalArgumentException("Release quantity must be positive");
         }
         if (this.reservedQty < quantity) {
-            throw new IllegalStateException("Cannot release more than currently reserved");
+            throw new IllegalStateException("Cannot release more stock than currently reserved");
         }
         this.reservedQty -= quantity;
         this.availableQty += quantity;
-        validateInvariant();
+        validateInvariants();
     }
 
     public void dispatchReservedStock(int quantity) {
         if (quantity <= 0) {
             throw new IllegalArgumentException("Dispatch quantity must be positive");
         }
-        if (this.reservedQty < quantity || this.physicalQty < quantity) {
-            throw new IllegalStateException("Insufficient reserved/physical stock to dispatch");
+        if (this.reservedQty < quantity) {
+            throw new IllegalStateException("Cannot dispatch more stock than currently reserved");
         }
         this.reservedQty -= quantity;
         this.physicalQty -= quantity;
-        validateInvariant();
+        validateInvariants();
     }
 
-    public void receiveStock(int quantity) {
+    public void addPhysicalStock(int quantity) {
         if (quantity <= 0) {
-            throw new IllegalArgumentException("Received stock must be positive");
+            throw new IllegalArgumentException("Inward quantity must be positive");
         }
         this.physicalQty += quantity;
         this.availableQty += quantity;
-        validateInvariant();
+        validateInvariants();
     }
 
-    private void validateInvariant() {
-        if (physicalQty < 0 || availableQty < 0 || reservedQty < 0 || damagedQty < 0) {
-            throw new IllegalStateException("Inventory bucket values cannot be negative");
+    public void markAsDamaged(int quantity) {
+        if (quantity <= 0) {
+            throw new IllegalArgumentException("Damaged quantity must be positive");
         }
-        if (physicalQty != (availableQty + reservedQty + damagedQty)) {
+        if (this.availableQty < quantity) {
+            throw new InsufficientStockException("Cannot mark damaged: requested " + quantity + " exceeds available " + this.availableQty);
+        }
+        this.availableQty -= quantity;
+        this.damagedQty += quantity;
+        validateInvariants();
+    }
+
+    private void validateInvariants() {
+        if (this.physicalQty < 0 || this.availableQty < 0 || this.reservedQty < 0 || this.damagedQty < 0) {
+            throw new IllegalStateException("Inventory counts cannot be negative");
+        }
+        if (this.physicalQty != (this.availableQty + this.reservedQty + this.damagedQty)) {
             throw new IllegalStateException(
-                    "Inventory invariant broken: Physical (" + physicalQty +
-                            ") != Available (" + availableQty + ") + Reserved (" + reservedQty + ") + Damaged (" + damagedQty + ")"
+                    String.format("Invariant violation: physical (%d) != available (%d) + reserved (%d) + damaged (%d)",
+                            this.physicalQty, this.availableQty, this.reservedQty, this.damagedQty)
             );
         }
     }
