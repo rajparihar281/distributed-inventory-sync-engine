@@ -30,19 +30,15 @@ public class OrderService {
         String orderNumber = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         Order order = new Order(orderNumber, request.getChannel());
 
-        // 1. Build line items
         for (CreateOrderRequest.OrderItemRequest itemReq : request.getItems()) {
             Product product = productRepository.findById(itemReq.getProductId())
                     .orElseThrow(() -> new IllegalArgumentException("Product not found with ID: " + itemReq.getProductId()));
             order.addItem(product, itemReq.getQuantity(), product.getPrice());
         }
 
-        // 2. Persist initial order header
         Order savedOrder = orderRepository.save(order);
 
-        // 3. Resolve Allocations (Manual Warehouse vs. Strategy Engine)
         if (request.getWarehouseId() != null) {
-            // Explicit warehouse path
             Warehouse warehouse = warehouseRepository.findById(request.getWarehouseId())
                     .orElseThrow(() -> new IllegalArgumentException("Warehouse not found with ID: " + request.getWarehouseId()));
 
@@ -56,7 +52,6 @@ public class OrderService {
                 reservationRepository.save(new InventoryReservation(item, warehouse, item.getQuantity()));
             }
         } else {
-            // Dynamic allocation via Strategy Pattern
             FulfillmentStrategy strategy = strategyFactory.getStrategy(request.getFulfillmentStrategy());
 
             for (OrderItem item : savedOrder.getItems()) {
@@ -74,7 +69,6 @@ public class OrderService {
             }
         }
 
-        // 4. Transition State: CREATED -> RESERVED
         savedOrder.transitionTo(OrderStatus.RESERVED);
         savedOrder = orderRepository.save(savedOrder);
 
@@ -100,6 +94,40 @@ public class OrderService {
                         order.getOrderNumber()
                 );
                 res.setStatus(ReservationStatus.RELEASED);
+                reservationRepository.save(res);
+            }
+        }
+
+        Order savedOrder = orderRepository.save(order);
+        return mapToResponse(savedOrder);
+    }
+
+    @Transactional
+    public OrderResponse dispatchOrder(String orderNumber) {
+        Order order = orderRepository.findByOrderNumber(orderNumber)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderNumber));
+
+        if (order.getStatus() == OrderStatus.RESERVED) {
+            order.transitionTo(OrderStatus.CONFIRMED);
+            order.transitionTo(OrderStatus.PACKING);
+            order.transitionTo(OrderStatus.DISPATCHED);
+        } else {
+            throw new IllegalStateException("Order must be in RESERVED state to initiate dispatch");
+        }
+
+        for (OrderItem item : order.getItems()) {
+            List<InventoryReservation> activeReservations = reservationRepository
+                    .findByOrderItemIdAndStatus(item.getId(), ReservationStatus.ACTIVE);
+
+            for (InventoryReservation res : activeReservations) {
+                inventoryService.dispatchStock(
+                        item.getProduct().getId(),
+                        res.getWarehouse().getId(),
+                        res.getReservedQty(),
+                        order.getOrderNumber()
+                );
+
+                res.setStatus(ReservationStatus.COMMITTED);
                 reservationRepository.save(res);
             }
         }
