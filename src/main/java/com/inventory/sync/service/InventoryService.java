@@ -1,5 +1,6 @@
 package com.inventory.sync.service;
 
+import com.inventory.sync.cache.InventoryCacheService;
 import com.inventory.sync.domain.*;
 import com.inventory.sync.exception.InsufficientStockException;
 import com.inventory.sync.repository.InventoryAuditLogRepository;
@@ -18,6 +19,7 @@ public class InventoryService {
     private final InventoryAuditLogRepository auditLogRepository;
     private final ProductRepository productRepository;
     private final WarehouseRepository warehouseRepository;
+    private final InventoryCacheService cacheService;
 
     @Transactional
     public Inventory reserveStockWithLock(Long productId, Long warehouseId, int quantity, String orderNumber) {
@@ -40,6 +42,7 @@ public class InventoryService {
                 "Stock reserved for Order #" + orderNumber
         );
         auditLogRepository.save(audit);
+        cacheService.evict(productId, warehouseId);
 
         return savedInventory;
     }
@@ -63,6 +66,7 @@ public class InventoryService {
                 "Reservation released for Order #" + orderNumber
         );
         auditLogRepository.save(audit);
+        cacheService.evict(productId, warehouseId);
     }
 
     @Transactional
@@ -84,6 +88,7 @@ public class InventoryService {
                 "Stock physically dispatched for Order #" + orderNumber
         );
         auditLogRepository.save(audit);
+        cacheService.evict(productId, warehouseId);
     }
 
     @Transactional
@@ -111,6 +116,7 @@ public class InventoryService {
                 "Inward procurement batch: " + poReference
         );
         auditLogRepository.save(audit);
+        cacheService.evict(productId, warehouseId);
 
         return savedInventory;
     }
@@ -134,6 +140,7 @@ public class InventoryService {
                 reason
         );
         auditLogRepository.save(audit);
+        cacheService.evict(productId, warehouseId);
 
         return savedInventory;
     }

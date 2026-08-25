@@ -1,8 +1,9 @@
 package com.inventory.sync.controller;
 
+import com.inventory.sync.cache.InventoryCacheService;
 import com.inventory.sync.domain.Inventory;
-import com.inventory.sync.dto.InwardStockRequest;
 import com.inventory.sync.dto.InventoryResponse;
+import com.inventory.sync.dto.InwardStockRequest;
 import com.inventory.sync.dto.MarkDamagedRequest;
 import com.inventory.sync.service.InventoryService;
 import jakarta.validation.Valid;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 public class InventoryController {
 
     private final InventoryService inventoryService;
+    private final InventoryCacheService cacheService;
 
     @PostMapping("/inward")
     public ResponseEntity<InventoryResponse> inwardStock(@Valid @RequestBody InwardStockRequest request) {
@@ -44,8 +46,17 @@ public class InventoryController {
             @RequestParam Long productId,
             @RequestParam Long warehouseId
     ) {
-        Inventory inv = inventoryService.getInventory(productId, warehouseId);
-        return ResponseEntity.ok(mapToResponse(inv));
+        // 1. Cache-Aside: Check Redis first
+        return cacheService.get(productId, warehouseId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> {
+                    // 2. Fallback to MySQL DB
+                    Inventory inv = inventoryService.getInventory(productId, warehouseId);
+                    InventoryResponse response = mapToResponse(inv);
+                    // 3. Write-Back to Redis with TTL
+                    cacheService.put(productId, warehouseId, response);
+                    return ResponseEntity.ok(response);
+                });
     }
 
     private InventoryResponse mapToResponse(Inventory inv) {
